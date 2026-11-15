@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Four Lane Rush 3D</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#111;font-family:Arial;color:white}
+#hud{position:absolute;top:12px;left:12px;z-index:5;font-size:18px;font-weight:bold}
+#menu{position:absolute;inset:0;background:#000b;z-index:10;display:flex;align-items:center;justify-content:center;text-align:center}
+#panel{background:#202b39;padding:25px;border-radius:18px;width:85%;max-width:350px}
+button{border:0;border-radius:12px;padding:15px 24px;background:#ffb000;font-weight:bold;font-size:18px}
+#controls{position:absolute;bottom:25px;left:0;right:0;display:flex;justify-content:space-between;padding:0 25px;z-index:5}
+#controls button{width:85px;height:65px;font-size:30px;background:#ffffffaa}
+</style>
+</head>
+<body>
+
+<div id="hud">SKOR: <span id="score">0</span></div>
+
+<div id="menu">
+ <div id="panel">
+  <h1>FOUR LANE RUSH</h1>
+  <p>Hindari mobil dan bertahan selama mungkin!</p>
+  <button onclick="startGame()">MULAI</button>
+ </div>
+</div>
+
+<div id="controls">
+ <button id="left">◀</button>
+ <button id="right">▶</button>
+</div>
+
+<script type="module">
+import * as THREE from
+'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+scene.fog=new THREE.Fog(0x87ceeb,45,180);
+
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,300);
+camera.position.set(0,3.4,10);
+camera.lookAt(0,0,-18);
+
+const renderer=new THREE.WebGLRenderer({antialias:false});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.3));
+renderer.shadowMap.enabled=false;
+document.body.appendChild(renderer.domElement);
+
+const mat=(color)=>new THREE.MeshStandardMaterial({color,roughness:.65});
+
+const road=new THREE.Mesh(
+ new THREE.PlaneGeometry(13,300),
+ mat(0x292929)
+);
+road.rotation.x=-Math.PI/2;
+road.position.z=-110;
+scene.add(road);
+
+// Rumput
+const grass=new THREE.Mesh(
+ new THREE.PlaneGeometry(250,300),
+ mat(0x287b36)
+);
+grass.rotation.x=-Math.PI/2;
+grass.position.set(0,-.08,-110);
+scene.add(grass);
+
+// Garis pembatas jalan
+function box(w,h,d,color,x,y,z){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(color));
+ m.position.set(x,y,z);
+ scene.add(m);
+ return m;
+}
+
+for(let x of [-6.4,6.4]){
+ box(.18,.05,300,0xffffff,x,.04,-110);
+}
+
+// Garis jalur putus-putus
+let lines=[];
+for(let x of [-3,0,3]){
+ for(let z=-250;z<15;z+=12){
+  lines.push(box(.09,.04,5,0xffffff,x,.04,z));
+ }
+}
+
+// Pohon sederhana
+let trees=[];
+function tree(x,z){
+ const group=new THREE.Group();
+ const trunk=new THREE.Mesh(
+  new THREE.CylinderGeometry(.18,.25,1.5,6),mat(0x654321));
+ trunk.position.y=.75;
+ group.add(trunk);
+ const leaves=new THREE.Mesh(
+  new THREE.ConeGeometry(1.1,3,7),mat(0x12652b));
+ leaves.position.y=2.7;
+ group.add(leaves);
+ group.position.set(x,0,z);
+ scene.add(group);
+ trees.push(group);
+}
+for(let z=-250;z<20;z+=12){
+ tree(-10,z);
+ tree(10,z-5);
+}
+
+// Membuat mobil
+function makeCar(color){
+ const g=new THREE.Group();
+
+ const body=new THREE.Mesh(
+  new THREE.BoxGeometry(1.55,.65,3),
+  mat(color));
+ body.position.y=.7;
+ g.add(body);
+
+ const cabin=new THREE.Mesh(
+  new THREE.BoxGeometry(1.25,.65,1.45),
+  mat(0x182c3d));
+ cabin.position.set(0,1.25,-.1);
+ g.add(cabin);
+
+ for(let x of [-.82,.82]){
+  for(let z of [-.95,.95]){
+   const wheel=new THREE.Mesh(
+    new THREE.CylinderGeometry(.32,.32,.2,10),
+    mat(0x111111));
+   wheel.rotation.z=Math.PI/2;
+   wheel.position.set(x,.38,z);
+   g.add(wheel);
+  }
+ }
+
+ for(let x of [-.48,.48]){
+  const light=new THREE.Mesh(
+   new THREE.BoxGeometry(.3,.2,.08),mat(0xffffbb));
+  light.position.set(x,.72,-1.53);
+  g.add(light);
+ }
+
+ return g;
+}
+
+// Mobil pemain
+const player=makeCar(0x1565ff);
+player.position.set(1.5,0,5);
+scene.add(player);
+
+let traffic=[];
+let running=false;
+let score=0;
+let speed=30;
+let targetX=1.5;
+
+const lanes=[-4.5,-1.5,1.5,4.5];
+
+function spawnCar(){
+ const lane=Math.floor(Math.random()*4);
+ const opposite=lane<2;
+ const car=makeCar(
+  [0xff2222,0xffcc00,0xffffff,0x222222,0x00cc99]
+  [Math.floor(Math.random()*5)]
+ );
+
+ car.position.set(lanes[lane],0,-130);
+ if(opposite) car.rotation.y=Math.PI;
+
+ scene.add(car);
+ traffic.push({
+  mesh:car,
+  opposite:opposite,
+  lane:lane
+ });
+}
+
+let spawnTimer=0;
+
+function moveLeft(){
+ if(!running)return;
+ targetX=Math.max(-4.5,targetX-3);
+}
+function moveRight(){
+ if(!running)return;
+ targetX=Math.min(4.5,targetX+3);
+}
+
+document.getElementById('left').addEventListener('pointerdown',moveLeft);
+document.getElementById('right').addEventListener('pointerdown',moveRight);
+
+window.addEventListener('keydown',e=>{
+ if(e.key==='ArrowLeft'||e.key==='a')moveLeft();
+ if(e.key==='ArrowRight'||e.key==='d')moveRight();
+});
+
+function startGame(){
+ document.getElementById('menu').style.display='none';
+
+ traffic.forEach(c=>scene.remove(c.mesh));
+ traffic=[];
+ score=0;
+ speed=30;
+ spawnTimer=0;
+ targetX=1.5;
+ player.position.set(1.5,0,5);
+ running=true;
+}
+
+function endGame(){
+ running=false;
+ document.getElementById('menu').style.display='flex';
+ document.getElementById('panel').innerHTML=`
+ <h1>GAME OVER</h1>
+ <h2>Skor: ${Math.floor(score)}</h2>
+ <button onclick="startGame()">MAIN LAGI</button>`;
+}
+
+let last=0;
+
+function animate(time){
+ requestAnimationFrame(animate);
+ const dt=Math.min((time-last)/1000,.04);
+ last=time;
+
+ if(running){
+  score+=dt*10;
+  speed=Math.min(65,30+score/100);
+  document.getElementById('score').textContent=Math.floor(score);
+
+  // Gerakan mobil pemain halus
+  player.position.x+=(targetX-player.position.x)*Math.min(1,dt*9);
+
+  // Marka jalan bergerak
+  lines.forEach(l=>{
+   l.position.z+=speed*dt;
+   if(l.position.z>15)l.position.z-=264;
+  });
+
+  // Pohon bergerak
+  trees.forEach(t=>{
+   t.position.z+=speed*dt;
+   if(t.position.z>20)t.position.z-=270;
+  });
+
+  // Kemunculan mobil
+  spawnTimer+=dt;
+  if(spawnTimer>1.15){
+   spawnCar();
+   spawnTimer=0;
+  }
+
+  // Mobil lawan dan searah
+  for(let i=traffic.length-1;i>=0;i--){
+   const c=traffic[i];
+
+   const relativeSpeed=c.opposite
+    ? speed+22
+    : Math.max(8,speed-12);
+
+   c.mesh.position.z+=relativeSpeed*dt;
+
+   // Tabrakan
+   if(Math.abs(c.mesh.position.z-player.position.z)<2.2 &&
+      Math.abs(c.mesh.position.x-player.position.x)<1.25){
+    endGame();
+    break;
+   }
+
+   if(c.mesh.position.z>18){
+    scene.remove(c.mesh);
+    traffic.splice(i,1);
+   }
+  }
+
+  // Kamera mengikuti pemain
+  camera.position.x+=(player.position.x*.12-camera.position.x)*dt*2;
+ }
+
+ renderer.render(scene,camera);
+}
+
+animate(0);
+
+window.addEventListener('resize',()=>{
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
